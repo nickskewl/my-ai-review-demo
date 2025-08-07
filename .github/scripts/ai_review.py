@@ -10,7 +10,7 @@ def call_openai_review(diff):
     openai.api_key = os.getenv("OPENAI_API_KEY")
     system_prompt = "You are a senior software engineer. Review the following Git diff and provide feedback."
     response = openai.ChatCompletion.create(
-        model="gpt-4o",
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": diff}
