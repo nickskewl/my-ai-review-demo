@@ -20,7 +20,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install openai
+          pip install -r .github/requirements.txt
 
       - name: Run AI Review Script
         env:

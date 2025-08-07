@@ -1,4 +1,4 @@
-import openai
+from openai import OpenAI
 import os
 import subprocess
 
@@ -7,16 +7,16 @@ def get_git_diff():
     return result.stdout
 
 def call_openai_review(diff):
-    openai.api_key = os.getenv("OPENAI_API_KEY")
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     system_prompt = "You are a senior software engineer. Review the following Git diff and provide feedback."
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": diff}
         ]
     )
-    return response['choices'][0]['message']['content']
+    return response.choices[0].message.content
 
 def main():
     diff = get_git_diff()
