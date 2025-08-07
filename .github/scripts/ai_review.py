@@ -73,9 +73,11 @@ def call_openai_review(diff):
 def post_comment_to_pr(review):
     headers = {
         "Authorization": f"Bearer {github_token}",
-        "Accept": "application/vnd.github+json"
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
     }
-    comment_url = f"{pr_url}/comments"
+    # Use the GitHub API endpoint for creating issue comments (works for PRs too)
+    comment_url = f"https://api.github.com/repos/{repo_name}/issues/{pr_number}/comments"
     data = {"body": f"## 🤖 AI Code Review\n\n{review}"}
 
     response = requests.post(comment_url, headers=headers, json=data)
