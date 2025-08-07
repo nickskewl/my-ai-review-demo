@@ -2,6 +2,7 @@ from openai import OpenAI
 import os
 import subprocess
 from github import Github
+import requests
 
 # Get environment variables
 github_token = os.getenv("GITHUB_TOKEN")
@@ -29,10 +30,21 @@ def call_openai_review(diff):
 
 
 def post_comment_to_pr(review):
-    g = Github(github_token)
-    repo = g.get_repo(repo_name)
-    pr = repo.get_pull(pr_number)
-    pr.create_issue_comment(f"🤖 **AI Code Review Suggestions**\n\n{review}")
+    pr_url = os.environ["PR_URL"]
+    github_token = os.environ["GITHUB_TOKEN"]
+    
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json"
+    }
+    comment_url = f"{pr_url}/comments"
+    data = {"body": review}
+
+    response = requests.post(comment_url, headers=headers, json=data)
+    if response.status_code == 201:
+        print("✅ AI review comment posted to PR.")
+    else:
+        print("❌ Failed to post comment:", response.status_code, response.text)
 
 
 def main():
