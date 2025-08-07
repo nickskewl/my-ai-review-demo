@@ -1,102 +1,92 @@
-from openai import OpenAI
 import os
 import subprocess
-from github import Github
-import requests
 import sys
+import json
+import requests
+from openai import OpenAI
 
-# Get environment variables with error handling
-github_token = os.getenv("GITHUB_TOKEN")
-repo_name = os.getenv("GITHUB_REPOSITORY") 
-pr_url = os.getenv("PR_URL")
+# Required environment variables
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GITHUB_REPOSITORY = os.getenv("GITHUB_REPOSITORY")
+GITHUB_SHA = os.getenv("GITHUB_SHA")  # Needed for check run
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Validate required environment variables
-if not github_token:
-    print("❌ Error: GITHUB_TOKEN environment variable is required")
+if not all([GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_SHA, OPENAI_API_KEY]):
+    print("❌ Missing one or more required environment variables.")
     sys.exit(1)
-
-if not repo_name:
-    print("❌ Error: GITHUB_REPOSITORY environment variable is required")
-    sys.exit(1)
-
-if not pr_url:
-    print("❌ Error: PR_URL environment variable is required")
-    sys.exit(1)
-
-# Get PR number from environment or extract from URL
-pr_number_env = os.getenv("PR_NUMBER")
-if pr_number_env:
-    try:
-        pr_number = int(pr_number_env)
-    except ValueError:
-        print(f"❌ Error: Invalid PR_NUMBER environment variable: {pr_number_env}")
-        sys.exit(1)
-else:
-    # Fallback: extract PR number from PR_URL
-    try:
-        pr_number = int(pr_url.split('/')[-1])
-    except (ValueError, IndexError):
-        print(f"❌ Error: Could not extract PR number from PR_URL: {pr_url}")
-        sys.exit(1)
-
-print(f"📝 Processing PR #{pr_number} for repository {repo_name}")
-
 
 def get_git_diff():
     result = subprocess.run(["git", "diff", "origin/main...HEAD"], capture_output=True, text=True)
     return result.stdout
 
-
 def call_openai_review(diff):
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        print("❌ Error: OPENAI_API_KEY environment variable is required")
-        sys.exit(1)
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    system_prompt = "You're a senior engineer. For each issue found in this git diff, suggest improvement in format:\n\nFile: <filename>\nLine: <line number>\nSuggestion: <comment>"
     
-    try:
-        client = OpenAI(api_key=openai_api_key)
-        system_prompt = "You are a senior software engineer. Review the following GitHub pull request diff for potential bugs, code smells, style issues, and offer constructive suggestions."
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": diff}
-            ],
-            max_tokens=300
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"❌ Error calling OpenAI API: {e}")
-        sys.exit(1)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": diff}
+        ],
+        max_tokens=600
+    )
+    return response.choices[0].message.content
 
+def parse_to_annotations(raw_review):
+    annotations = []
+    for block in raw_review.strip().split("\n\n"):
+        try:
+            lines = block.splitlines()
+            file_line = lines[0].split(":")[1].strip()
+            line_num = int(lines[1].split(":")[1].strip())
+            message = lines[2].split(":", 1)[1].strip()
 
-def post_comment_to_pr(review):
+            annotations.append({
+                "path": file_line,
+                "start_line": line_num,
+                "end_line": line_num,
+                "annotation_level": "notice",
+                "message": message
+            })
+        except Exception:
+            continue  # Skip malformed block
+    return annotations[:50]  # GitHub allows up to 50 annotations per check run
+
+def create_github_check_run(annotations):
+    url = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/check-runs"
     headers = {
-        "Authorization": f"Bearer {github_token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28"
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json"
     }
-    # Use the GitHub API endpoint for creating issue comments (works for PRs too)
-    comment_url = f"https://api.github.com/repos/{repo_name}/issues/{pr_number}/comments"
-    data = {"body": f"## 🤖 AI Code Review\n\n{review}"}
 
-    response = requests.post(comment_url, headers=headers, json=data)
+    data = {
+        "name": "AI Code Review",
+        "head_sha": GITHUB_SHA,
+        "status": "completed",
+        "conclusion": "neutral",
+        "output": {
+            "title": "AI Code Review Suggestions",
+            "summary": f"{len(annotations)} suggestion(s) found.",
+            "annotations": annotations
+        }
+    }
+
+    response = requests.post(url, headers=headers, json=data)
     if response.status_code == 201:
-        print("✅ AI review comment posted to PR.")
+        print("✅ AI review check run created.")
     else:
-        print("❌ Failed to post comment:", response.status_code, response.text)
-
+        print("❌ Failed to create check run:", response.status_code, response.text)
 
 def main():
     diff = get_git_diff()
     if not diff.strip():
-        print("No changes detected for review.")
+        print("No changes detected.")
         return
 
     review = call_openai_review(diff)
-    print("AI Review:\n", review)
-    post_comment_to_pr(review)
-
+    annotations = parse_to_annotations(review)
+    create_github_check_run(annotations)
 
 if __name__ == "__main__":
     main()
